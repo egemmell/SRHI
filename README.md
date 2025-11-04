@@ -1,8 +1,12 @@
-# BREATHE Health Data
+# BREATHE Health Outcomes 
 ## About this Repository
-
 This private repository contains the code and directory structure for cleaning, preparation and analysis of health data for the BREATHE project.
-It includes files and directories recommended for enabling reproducibility and collaboration on the project. Although the data folders are included, datasets themselves will be shared securely with team members as not all are open source.
+Baseline demographic and health outcome data was obtained from government and research databases. Demographic variables, including age, race/ethnicity, population density and neighbourhood deprivation were used to describe the characteristics of the study area. 
+
+Dataset sources, references, and file locations are listed below.
+<img width="468" height="132" alt="image" src="https://github.com/user-attachments/assets/c81b99e3-525c-4cc2-bb42-fc1a6b0f492e" />
+
+This repository contains files and directories recommended for enabling reproducibility and collaboration. 
 
 
 ## Repo Structure
