@@ -1,4 +1,4 @@
-# BREATHE Scenario-related Health Outcomes 
+# BREATHE Scenario-related Health Impacts 
 ## About this Repository
 This repository contains the code and directory structure for cleaning, preparation and analysis of health data for the BREATHE project. 
 
