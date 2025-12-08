@@ -1,6 +1,6 @@
-# BREATHE Health Outcomes 
+# BREATHE Transportation-related Health Outcomes 
 ## About this Repository
-This repository contains the code and directory structure for cleaning, preparation and analysis of health data for the BREATHE project.
+This repository contains the code and directory structure for cleaning, preparation and analysis of health data for the BREATHE project. 
 
 
 ## Repo Structure
