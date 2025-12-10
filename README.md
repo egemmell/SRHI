@@ -1,7 +1,6 @@
-# BREATHE Health Outcomes 
+# BREATHE Scenario-related Health Impacts 
 ## About this Repository
-This private repository contains the code and directory structure for cleaning, preparation and descriptive analysis of health data for the BREATHE project.
-Baseline demographic and health outcome data was obtained from government and research databases. Demographic variables, including age, race/ethnicity, population density and neighbourhood deprivation were used to describe the characteristics of the study area. 
+This repository contains the code and directory structure for cleaning, preparation and analysis of health data for the BREATHE project. 
 
 
 ## Repo Structure
@@ -16,25 +15,22 @@ This repository contains files and directories recommended for enabling reproduc
 │
 ├── data
 │   ├── processed      <- The final, canonical data sets for modeling.
-│   └── raw            <- The original, immutable data dump.
+│   └── raw            <- The original data dump.
 │
-├── docs               <- A default Sphinx project; see sphinx-doc.org for details
+├── docs               
+├── notebooks          <- Jupyter notebooks. 
 │
-├── notebooks          <- Jupyter notebooks. The naming convention is a number (for ordering),
-│                         the creator's initials, and a short `-` delimited description, e.g.
-│                         `1.0-jqp-initial-data-exploration`.
-│
-├── output             <- Generated analysis as HTML, PDF, LaTeX, etc.
+├── output             <- Generated analysis
 │   └── figures        <- Generated graphics and figures to be used in reporting
 │
 ├── src                <- Source code for use in this project.
 │   │
 │   ├── data           <- Scripts to download or generate data
-│   │   └── name1.py
+│   │   └── 
 │   │
 │   ├── analysis       <- Scripts to complete analysis
-│   │   ├── name1.py
-│   │   └── name2.py
+│   │   ├── 
+│   │   └── 
 │   │
 │   └── visualisation  <- Scripts to create exploratory and results-oriented visualisations
 │       └── name1.py
