@@ -43,7 +43,7 @@ vignettes/*.pdf
 .Renviron
 
 # data files
-data/raw/
+#data/raw/
 data/processed/
 
 # translation temp files
