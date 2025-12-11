@@ -1,7 +1,7 @@
 # This script prepares 2019 IHME county-level, all-cause mortality by sex, race and age group data for analysis
 # Dataset used may be downloaded from https://ghdx.healthdata.org/record/ihme-data/united-states-causes-death-life-expectancy-by-county-race-ethnicity-2000-2019
 # County cartographic boundary shapefiles (2024) may be downloaded from https://www.census.gov/geographies/mapping-files/time-series/geo/cartographic-boundary.html 
-
+#   
 library(readr)
 library(dplyr)
 library(tidyr)
