@@ -9,12 +9,27 @@ library(tidyr)
 library(sf)
 library(stringr)
 
-# load county and census tract shapefiles
-counties <- st_read("data/raw/county_census_cb_2024.shp")
+# load county shapefiles
+counties <- st_read("data/raw/cb_2024_us_county_500k.shp")
 counties <- st_as_sf(counties, crs = 4326)
-counties <- counties[, 2]
+counties <- counties[,2]
 colnames(counties) <- c("fips", "geometry")
 
+# process ihd mortality rates by county
+ihd <- read_csv("data/raw/ihd_mortality_county_no_strata_2019_CDC.csv")
+
+# limit to relevant relevant and exclude metadata rows
+ihd <- ihd[-c(10:61), c(3,2,6:9)]
+
+# update column names
+colnames(ihd) <- c("fips", "location_name", "mx", "lCI", "uCI", "se")
+
+ihd$year <- "2019"
+ihd$outcome_name <- "Ischemic heart disease mortality"
+ihd$metric_name <- "Rate"
+
+write_csv(ihd, "ihd_county_2019_CDC.csv")
+# process crude ihd mortality rates stratified by age, sex and race/ethnicity
 #ihd <- read_csv("data/raw/ihd_mortality_county_2019_CDC.csv")
 ihd <- read_csv("data/raw/ihd_mortality_county_10y_2019_CDC.csv")
 ihd <- ihd[-c(2593:2660), c(2,3,4,6,8,10,12,13:16)]

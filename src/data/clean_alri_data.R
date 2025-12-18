@@ -130,8 +130,9 @@ write_csv(alri, "data/processed/alri_county_2019_HCAI.csv")
 
 # make shapefiles
 alri <- merge(alri, counties, by = "fips")
+alri <- alri[, -c(12:17)]
 
-st_write(alri, "data/processed/alri_county_2019_HCAI.shp")
+st_write(alri, "data/processed/alri_county_2019_HCAI.shp", append = FALSE)
 
 rm(alri, counties)
 gc()

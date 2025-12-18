@@ -303,4 +303,65 @@ leaflet(data = acm) %>%
             title = "Age-adjusted mortality <br>from IHD<br>(per 100,000 pop)"
   )
 
-%>%
+###########################################################
+asthma <-st_read("data/processed/adult_currentasthma_county_2021_2022.shp")
+
+pal <- colorNumeric(
+  palette = "BuGn", domain = acm$mx,
+  na.color = "transparent"
+)
+
+leaflet(data = acm) %>% 
+  addTiles(group = "OpenStreetMap") %>%
+  
+  addPolygons(data = acm,
+              stroke = TRUE, 
+              weight = 1, 
+              color = "darkgrey",
+              smoothFactor = 0.5,
+              opacity = 1.0, 
+              fillOpacity = 0.8,
+              fillColor = pal,
+              highlightOptions = highlightOptions(color = "white", weight = 2,
+                                                  bringToFront = TRUE)) %>%
+  addLegend(data = baseline,
+            position = "topright",
+            pal = pal,
+            values = ~mx,
+            opacity = 1,
+            title = "Age-adjusted mortality <br>from IHD<br>(per 100,000 pop)"
+  )
+
+
+
+######################################################################################
+alri <- st_read("data/processed/alri_county_2019_HCAI.shp")
+
+alri <- filter(alri, sex_nam == "Both", race_nm == "Total")
+
+pal <- colorNumeric(
+  palette = "Reds", domain = alri$mx,
+  na.color = "transparent"
+)
+
+leaflet(data = alri) %>% 
+  addTiles(group = "OpenStreetMap") %>%
+  
+  addPolygons(data = alri,
+              stroke = TRUE, 
+              color = "darkgrey",
+              weight = 1, 
+              smoothFactor = 0.5,
+              opacity = 1.0, 
+              fillOpacity = 0.9,
+              fillColor = ~pal(mx),
+              highlightOptions = highlightOptions(color = "white", weight = 2,
+                                                  bringToFront = TRUE)) %>%
+  addLegend(data = alri,
+            position = "topright",
+            pal = pal,
+            values = ~mx,
+            opacity = 1,
+            title = "ALRI per 1,000 pop)"
+  )
+

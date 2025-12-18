@@ -116,10 +116,16 @@ colnames(asth_prev) <- c("location_name",
                          "uCI",          
                          "lCI")
 
-write_csv(asth_prev, "data/processed/adult_currentasthma_county_2021_2022.csv", append = FALSE)
+write_csv(asth_prev, "data/processed/adult_currentasthma_county_agegrp_2021_2022_CHIS.csv", append = FALSE)
+
+asth_prev <- asth_prev[asth_prev$age_name == "18+",]
+write_csv(asth_prev, "data/processed/adult_currentasthma_county_2021_2022_CHIS.csv", append = FALSE)
+
+asth_prev <- merge(asth_prev, counties, by = "fips")
+st_write(asth_prev, "data/processed/adult_currentasthma_county_2021_2022_CHIS.shp", append = FALSE)
 
 ################################################################################
-# extract child asthma data
+# extract child asthma data, with age groups (for possible sensitivity analysis)
 
 child_asth <- chis[chis$COUNTY %in% sfba, ] 
 
@@ -165,13 +171,82 @@ colnames(child_asth) <- c("location_name",
                          "lCI",
                          "comment")
 
-write_csv(child_asth, "data/processed/child_currentasthma_county_2021_2022.csv", append = FALSE)
+write_csv(child_asth, "data/processed/child_currentasthma_county_agegrp_2021_2022.csv", append = FALSE)
 
 
 
 # reference 
 # annotation "Percentage ever having been diagnosed with asthma by a health care provider AND report they still have asthma and/or had an asthma episode or attack within the past 12 months
 # missing bars for ages 0-17 in some counties are due to unreliable estimates 
+
+########################################################################
+# make all child ages asthma data for baseline, add in state-level rate columns to replace unstable estimates and for sensitivity analyses
+child_asth <- chis[chis$COUNTY %in% sfba, ] 
+
+
+child_asth$lCI <- sub("-.*", "", child_asth$'95% CONFIDENCE INTERVAL')
+child_asth$lCI <- sub("(", "", child_asth$lCI, fixed = TRUE)
+
+child_asth$uCI <- sub(").*", "", child_asth$'95% CONFIDENCE INTERVAL')
+child_asth$uCI <- sub(".*-", "", child_asth$uCI)
+
+child_asth$lCI <- as.numeric(child_asth$lCI)   
+child_asth$uCI <- as.numeric(child_asth$uCI)
+
+child_asth$'CURRENT PREVALENCE' <- as.numeric(child_asth$`CURRENT PREVALENCE`)
+
+# limit age groups to 0–17 years. Note that estimates for child age groups are
+# statistically unstable or unavailable for some counties
+child_asth <- filter(child_asth, `AGE GROUP` == "0–17 years")
+
+
+child_asth$outcome_name <- "current asthma"
+child_asth$metric_name <- "prevalence"
+child_asth$race_name <- "Total"
+child_asth$sex_name <- "Both"
+
+child_asth <- merge(child_asth, fips, by.x = "COUNTY", by.y = "location_name")
+child_asth <- child_asth[, c(1,18,13,17,16,14,3,15,6,11,12,10)]
+
+colnames(child_asth) <- c("location_name",
+                          "fips",
+                          "age_name",
+                          "sex_name",
+                          "race_name",
+                          "outcome_name", 
+                          "year",          
+                          "metric_name",
+                          "mx",
+                          "uCI",          
+                          "lCI",
+                          "comment")
+
+
+
+# find baseline statewide child asthma prevalence
+chld_st <- filter(chis, `AGE GROUP` == "0–17 years")
+chld_st <- chld_st[chld_st$COUNTY == "California" ,]
+
+# add state-level prevalence to county data for analysis if county-level estimates are missing or unstable
+child_asth$mx_state <- chld_st$`CURRENT PREVALENCE`
+
+child_asth$lCI_state <- sub("-.*", "", chld_st$'95% CONFIDENCE INTERVAL')
+child_asth$lCI_state <- sub("(", "", child_asth$lCI_state, fixed = TRUE)
+
+child_asth$uCI_state <- sub(").*", "", chld_st$'95% CONFIDENCE INTERVAL')
+child_asth$uCI_state <- substr(child_asth$uCI_state, 6, 8)
+
+child_asth$lCI_state <- as.numeric(child_asth$lCI_state)   
+child_asth$uCI_state <- as.numeric(child_asth$uCI_state)
+
+write_csv(child_asth, "data/processed/child_currentasthma_county_2021_2022.csv", append = FALSE)
+
+counties <- counties[, 2]
+child_asth <- merge(child_asth, counties, by = "fips")
+
+st_write(child_asth, "data/processed/child_currentasthma_county_2021_2022.shp", append = FALSE)
+
+
 
 ########################################################################
 # CDC PLACES adult asthma by census tract 
