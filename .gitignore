@@ -43,8 +43,22 @@ vignettes/*.pdf
 .Renviron
 
 # data files
-#data/raw/
+data/raw/
 data/processed/
+*.csv
+*.shp
+*.dbf
+*.rds
+*.RData# data files
+
+# documents
+docs/
+
+#scratch code
+src/scratch
+
+# outputs
+output/
 
 # translation temp files
 po/*~
