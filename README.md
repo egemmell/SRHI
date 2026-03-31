@@ -2,8 +2,7 @@
 
 ## About
 This repository contains the R code for cleaning, preparing, and analyzing 
-health data for the BREATHE project — a Health Impact Assessment (HIA) 
-pipeline for the San Francisco Bay Area. The pipeline estimates how changes 
+health data for the BREATHE project. The pipeline estimates how changes 
 in air pollutant concentrations (PM2.5, NO2, and black carbon) affect 
 population health outcomes across Bay Area census tracts.
 
@@ -47,8 +46,7 @@ available.
     │   └── impact_analysis_03232026.R
     │
     ├── visualisation          <- Visualization scripts
-    │
-    └── scratch                <- Exploratory and development scripts (not for production)
+    
 ```
 
 ---
@@ -62,10 +60,10 @@ available.
 | Ischemic heart disease mortality | CDC | 2019 |
 | Lung cancer mortality | IHME | 2019 |
 | Acute lower respiratory infection | HCAi | 2019 |
-| Asthma (pediatric) | SEER | 2019 |
+| Asthma (pediatric) | CHIS | 2021-2022 |
 | Asthma (adult) | CHIS | 2021–2022 |
 | Asthma (adult prevalence) | CDC PLACES | 2019 |
-| Census tract boundaries | U.S. Census Bureau TigerLine | 2024 |
+| Census tract boundaries | U.S. Census Bureau TigerLine | 2019 |
 
 *See `DATAINFO.md` for access instructions and data sharing agreements.*
 
