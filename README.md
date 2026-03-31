@@ -4,7 +4,7 @@
 This repository contains the R code for cleaning, preparing, and analyzing 
 health data for the BREATHE project. The pipeline estimates how changes 
 in air pollutant concentrations (PM2.5, NO2, and black carbon) affect 
-population health outcomes across Bay Area census tracts.
+population health outcomes across the study area.
 
 Data will be shared securely with team members as not all data is publicly 
 available.
