@@ -22,15 +22,15 @@ colnames(counties) <- c("fips", "geometry")
 load("data/raw/sfba.RData")
 
 # read in the female, male and both sexes lc cancer mortality data
-lcan_b <- read_csv("data/raw/IHME_USA_LUNG_CANCER_COUNTY_RACE_ETHNICITY_2000_2019_MX_2019_BOTH_Y2025M06D15.csv")
+lcan_b <- read_csv("data/raw/baseline_health_outcomes/IHME_USA_LUNG_CANCER_COUNTY_RACE_ETHNICITY_2000_2019_MX_2019_BOTH_Y2025M06D15.csv")
 lcan_b <- lcan_b[grep("California", lcan_b$location_name), c(3:5,7,9,11,13,14,16:19)]
 lcan_b <- as.data.frame(lcan_b)
 
-lcan_f <- read_csv("data/raw/IHME_USA_LUNG_CANCER_COUNTY_RACE_ETHNICITY_2000_2019_MX_2019_FEMALE_Y2025M06D15.csv")
+lcan_f <- read_csv("data/raw/baseline_health_outcomes/IHME_USA_LUNG_CANCER_COUNTY_RACE_ETHNICITY_2000_2019_MX_2019_FEMALE_Y2025M06D15.csv")
 lcan_f <- lcan_f[grep("California", lcan_f$location_name), c(3:5,7,9,11,13,14,16:19)]
 lcan_f <- as.data.frame(lcan_f)
 
-lcan_m <- read_csv("data/raw/IHME_USA_LUNG_CANCER_COUNTY_RACE_ETHNICITY_2000_2019_MX_2019_MALE_Y2025M06D15.csv")
+lcan_m <- read_csv("data/raw/baseline_health_outcomes/IHME_USA_LUNG_CANCER_COUNTY_RACE_ETHNICITY_2000_2019_MX_2019_MALE_Y2025M06D15.csv")
 lcan_m <- lcan_m[grep("California", lcan_m$location_name), c(3:5,7,9,11,13,14,16:19)]
 lcan_m <- as.data.frame(lcan_m)
 
@@ -86,4 +86,103 @@ lcan <- merge(lcan, counties)
 st_write(lcan, "data/processed/lcan_mortality_county_2019_IHME.shp", append = FALSE)
 
 rm(counties, lcan)
+gc()
+
+# =============================================================================
+# Clean 2019 IHME county-level lung cancer mortality
+# Stratified by sex, race/ethnicity and age group
+#
+# Source: https://ghdx.healthdata.org/record/ihme-data/us-lung-cancer-county-race-ethnicity-2000-2019
+# =============================================================================
+
+library(tidyverse)
+library(stringr)
+
+source("config.R")
+
+# =============================================================================
+# A. Load and combine male, female and both sexes files
+# =============================================================================
+
+lcan_files <- c(
+  "data/raw/baseline_health_outcomes/IHME_USA_LUNG_CANCER_COUNTY_RACE_ETHNICITY_2000_2019_MX_2019_BOTH_Y2025M06D15.csv",
+  "data/raw/baseline_health_outcomes/IHME_USA_LUNG_CANCER_COUNTY_RACE_ETHNICITY_2000_2019_MX_2019_FEMALE_Y2025M06D15.csv",
+  "data/raw/baseline_health_outcomes/IHME_USA_LUNG_CANCER_COUNTY_RACE_ETHNICITY_2000_2019_MX_2019_MALE_Y2025M06D15.csv"
+)
+
+lcan <- lcan_files |>
+  map(\(f) {
+    read_csv(f, show_col_types = FALSE) |>
+      filter(str_detect(location_name, "California")) |>
+      select(fips, location_name, age_name, sex_name,
+             race_name, cause_name, year, metric_name, val, upper, lower)
+  }) |>
+  bind_rows()
+
+# =============================================================================
+# B. Clean and recode
+# =============================================================================
+lcan <- lcan_files |>
+  map(\(f) {
+    read_csv(f, show_col_types = FALSE) |>
+      filter(str_detect(location_name, "California")) |>
+      select(fips, location_name, age_name, sex_name,
+             race_name, cause_name, year, metric_name, val, upper, lower)
+  }) |>
+  bind_rows() |>
+  mutate(
+    location_name = str_remove(location_name, fixed(" County (California)")),
+    fips = case_when(
+      location_name == "California" ~ str_pad(as.character(fips), width = 2, side = "left", pad = "0"), # pad based on geography level
+      TRUE                          ~ str_pad(as.character(fips), width = 5, side = "left", pad = "0")
+    ),
+    geolevl = if_else(location_name == "California", "state", "county"),
+    race_name = recode(race_name,
+                       "AIAN"   = "American Indian / Alaskan Native",
+                       "Asian"  = "Asian / Pacific Islander",
+                       "Latino" = "Hispanic"
+    ),
+    age_name   = if_else(age_name == "All Ages", "All ages", age_name),
+    cause_name = "Lung cancer mortality",
+    source     = "IHME",
+    mx_name    = "person-year at risk",
+    q_flag     = 0L,
+    year       = as.character(year),
+  ) |>
+  filter(
+    location_name %in% c(sfba_names, "California"),
+    age_name != "Age-standardized"     # exclude age-standardized estimates
+  ) |>
+  select(
+    geoid    = fips,
+    geolevl = geolevl,
+    lctn_nm  = location_name,
+    age_grp  = age_name,
+    sex_grp  = sex_name,
+    race_grp = race_name,
+    otcm_nm  = cause_name,
+    year,
+    source,
+    mx_name,
+    mx       = val,
+    mx_lower = lower,
+    mx_upper = upper,
+    q_flag
+  )
+
+# =============================================================================
+# C. QA checks
+# =============================================================================
+
+message(sprintf("Counties retained: %d (expected 9)", n_distinct(lcan$geoid)))
+message(sprintf("Sex groups: %s", paste(unique(lcan$sex_grp), collapse = ", ")))
+message(sprintf("Missing rates: %d", sum(is.na(lcan$mx))))
+summary(lcan$mx)
+
+# =============================================================================
+# D. Write output
+# =============================================================================
+
+write_csv(lcan, "data/processed/lcan_mortality_county_2019_IHME.csv", append = FALSE)
+rm(lcan)
 gc()
