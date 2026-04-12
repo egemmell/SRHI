@@ -14,13 +14,29 @@
 # Inputs:
 #   merged       — person-level data from exposure_population.R
 #                  columns: geoid, ind_id, hsld_id, isrm, age, sex, race,
-#                            NO2, BC, TotalPM25
+#                           NO2, BC, TotalPM25
 #
 #   all_outcomes — unified baseline health outcome dataframe with columns:
 #                  geoid, geolevl, age_grp, sex_grp, race_grp, otcm_nm,
-#                  year, source, mx, mx_lower, mx_upper, mx_name, q_flag
+#                  year, source, mx_name, mx, mx_lower, mx_upper, q_flag
 #
-# Run sequence (stratification x source x geography sensitivity analysis):
+# Analysis structure:
+#   PRIMARY (unstratified): uses All ages / Both sexes / Total race baseline
+#   rates to focus on spatial heterogeneity in exposure as the key driver
+#   of differential health impacts across census tracts.
+#
+#   SENSITIVITY (stratified): uses age / age+sex / age+race strata to
+#   explore how demographic composition interacts with exposure heterogeneity.
+#   Note: a uniform CRF is applied across all strata — stratified results
+#   reflect differential baseline burden, not differential susceptibility.
+#
+# Primary runs (unstratified):
+#   Run U01: IHME       | county | All-cause mortality       | All ages
+#   Run U02: CDC Wonder | county | IHD mortality             | All ages
+#   Run U03: IHME       | county | Lung cancer mortality     | All ages
+#
+# Sensitivity runs (stratified):
+#
 #   All-cause mortality (USALEEP tract, IHME county):
 #     Run 01: USALEEP | tract  | age
 #     Run 02: IHME    | county | age
@@ -40,13 +56,13 @@
 #     Run 12: CHIS | state  | age granular
 #     Run 13: CHIS | state  | age aggregate (0-17)
 #
-#   IHD mortality (CDC Wonder):
+#   IHD mortality (CDC Wonder; NO2 + BC + PM2.5):
 #     Run 14: CDC Wonder | county | age
 #     Run 15: CDC Wonder | county | age + sex
 #     Run 16: CDC Wonder | state  | age
 #     Run 17: CDC Wonder | state  | age + sex
 #
-#   Lung cancer mortality (IHME):
+#   Lung cancer mortality (IHME; NO2 + BC + PM2.5):
 #     Run 18: IHME | county | age
 #     Run 19: IHME | county | age + sex
 #     Run 20: IHME | county | age + race
@@ -57,9 +73,15 @@
 #     Run 23: HCAi | county | age + sex
 #     Run 24: HCAi | county | age + sex + race
 #
-#   Sensitivity:
-#     Run 25: CDC Places | county | age adults — includes q_flag <= 2
+# Notes:
+#   - No PM2.5 or BC RR available for adult asthma
+#   - No PM2.5 RR available for ALRI or child asthma
+#   - Asthma onset RRs applied to prevalence — acknowledged limitation
+#   - IHD county data only available for ages 45+ (suppression below)
+#   - Child CHIS county estimates sparse — state-level more reliable
+#   - q_flag 2 (unstable) retained for child asthma sensitivity analyses
 # =============================================================================
+
 
 library(sf)
 library(dplyr)
@@ -74,7 +96,7 @@ library(readr)
 all_outcomes <- read_csv("data/processed/all_baseline_outcomes.csv",
                          col_types = cols(year = col_character()))
 
-merged <- readRDS("data/processed/exposure_population_test.rds")
+merged <- readRDS("data/processed/exposure_population.rds")
 
 # =============================================================================
 # B. Age lookup tables
@@ -223,43 +245,40 @@ rr_table <- tribble(
 #    q_flag_max:    0 = reliable only; 1 = include imputed; 2 = include unstable
 #    note:          documents any analytical caveats for this run
 # =============================================================================
-
 run_specs <- tribble(
-  ~run_id, ~otcm_nm,                                   ~source,      ~geolevl, ~geo_col,   ~age_lookup_key,   ~strata,                        ~q_flag_max, ~label,                                             ~note,
-  # All-cause mortality
-  "run01", "All-cause mortality",                      "USALEEP",    "tract",  "geoid",    "USALEEP",         list(character(0)),             0L,          "USALEEP | tract | age",                            "Tract-level; no sex/race strata",
-  "run02", "All-cause mortality",                      "IHME",       "county", "geoid", "IHME",            list(character(0)),             0L,          "IHME | county | age",                              "",
-  "run03", "All-cause mortality",                      "IHME",       "county", "geoid", "IHME",            list("race_grp"),               0L,          "IHME | county | age + race",                       "",
-  # Asthma — adults
-  "run04", "Current asthma prevalence (adults)",       "CDC Places", "tract",  "geoid",    "CDC Places",      list(character(0)),             0L,          "CDC Places | tract | age (18+)",                   "Adults only; tract level",
-  "run05", "Current asthma prevalence (adults)",       "CDC Places", "county", "geoid", "CDC Places",      list(character(0)),             0L,          "CDC Places | county | age (18+)",                  "Adults only",
-  "run06", "Current asthma prevalence (adults)",       "CHIS",       "county", "geoid", "CHIS_granular",   list(character(0)),             0L,          "CHIS | county | age adults (granular)",            "Non-overlapping: 18-64, 65+",
-  "run07", "Current asthma prevalence (adults)",       "CHIS",       "county", "geoid", "CHIS_aggregate",  list(character(0)),             0L,          "CHIS | county | age adults (18+ aggregate)",       "Comparable to CDC Places run05",
-  "run08", "Current asthma prevalence (adults)",       "CHIS",       "state",  "geoid",  "CHIS_granular",   list(character(0)),             0L,          "CHIS | state | age adults (granular)",             "",
-  "run09", "Current asthma prevalence (adults)",       "CHIS",       "state",  "geoid",  "CHIS_aggregate",  list(character(0)),             0L,          "CHIS | state | age adults (18+ aggregate)",        "",
-  # Asthma — children
-  "run10", "Current asthma prevalence (children)",     "CHIS",       "county", "geoid", "CHIS_granular",   list(character(0)),             0L,          "CHIS | county | age children (granular)",          "Non-overlapping: 0-4, 5-17",
-  "run11", "Current asthma prevalence (children)",     "CHIS",       "county", "geoid", "CHIS_aggregate",  list(character(0)),             0L,          "CHIS | county | age children (0-17 aggregate)",    "",
-  "run12", "Current asthma prevalence (children)",     "CHIS",       "state",  "geoid",  "CHIS_granular",   list(character(0)),             0L,          "CHIS | state | age children (granular)",           "",
-  "run13", "Current asthma prevalence (children)",     "CHIS",       "state",  "geoid",  "CHIS_aggregate",  list(character(0)),             0L,          "CHIS | state | age children (0-17 aggregate)",     "",
-  # IHD mortality
-  "run14", "Ischemic heart disease mortality",         "CDC Wonder", "county", "geoid", "CDC Wonder",      list(character(0)),             0L,          "CDC Wonder | county | age",                        "Age groups 45+ only (suppression below)",
-  "run15", "Ischemic heart disease mortality",         "CDC Wonder", "county", "geoid", "CDC Wonder",      list("sex_grp"),                0L,          "CDC Wonder | county | age + sex",                  "Age groups 45+ only (suppression below)",
-  "run16", "Ischemic heart disease mortality",         "CDC Wonder", "state",  "geoid",  "CDC Wonder",      list(character(0)),             0L,          "CDC Wonder | state | age",                         "Age groups 25+ at state level",
-  "run17", "Ischemic heart disease mortality",         "CDC Wonder", "state",  "geoid",  "CDC Wonder",      list("sex_grp"),                0L,          "CDC Wonder | state | age + sex",                   "",
-  # Lung cancer mortality
-  "run18", "Lung cancer mortality",                    "IHME",       "county", "geoid", "IHME",            list(character(0)),             0L,          "IHME | county | age",                              "",
-  "run19", "Lung cancer mortality",                    "IHME",       "county", "geoid", "IHME",            list("sex_grp"),                0L,          "IHME | county | age + sex",                        "",
-  "run20", "Lung cancer mortality",                    "IHME",       "county", "geoid", "IHME",            list("race_grp"),               0L,          "IHME | county | age + race",                       "",
-  "run21", "Lung cancer mortality",                    "IHME",       "county", "geoid", "IHME",            list(c("sex_grp", "race_grp")), 0L,          "IHME | county | age + sex + race",                 "",
-  # ALRI children
-  "run22", "Acute lower respiratory infection (children)",        "HCAi",       "county", "geoid", "HCAi",            list(character(0)),             0L,          "HCAi | county | age (0-17)",                       "Children only",
-  "run23", "Acute lower respiratory infection (children)",        "HCAi",       "county", "geoid", "HCAi",            list("sex_grp"),                0L,          "HCAi | county | age + sex",                        "Children only",
-  "run24", "Acute lower respiratory infection (children)",        "HCAi",       "county", "geoid", "HCAi",            list(c("sex_grp", "race_grp")), 0L,          "HCAi | county | age + sex + race",                 "Children only",
-  # Sensitivity
-  "run25", "Current asthma prevalence (adults)",       "CDC Places", "county", "geoid", "CDC Places",      list(character(0)),             2L,          "Sensitivity: CDC Places | county | q_flag<=2",     "Includes unstable estimates"
-) %>%
-  mutate(strata = map(strata, ~ .x[[1]]))  # unpack list column
+  ~run_id,  ~otcm_nm,                                        ~source,      ~geolevl, ~geo_col, ~age_lookup_key,  ~strata,                        ~q_flag_max, ~unstratified, ~label,                                              ~note,
+  # ── Unstratified primary analyses ──────────────────────────────────────────
+  "runU01", "All-cause mortality",                           "IHME",       "county", "geoid",  "IHME",           list(character(0)),             0L,          TRUE,          "PRIMARY: All-cause mortality | IHME | county | All ages",                 "All ages / Both / Total",
+  "runU02", "Ischemic heart disease mortality",              "CDC Wonder", "county", "geoid",  "CDC Wonder",     list(character(0)),             0L,          TRUE,          "PRIMARY: IHD mortality | CDC Wonder | county | All ages",           "All ages / Both / Total",
+  "runU03", "Lung cancer mortality",                         "IHME",       "county", "geoid",  "IHME",           list(character(0)),             0L,          TRUE,          "PRIMARY: Lung cancer mortality | IHME lcan | county | All ages",            "All ages / Both / Total",
+  # ── Stratified sensitivity analyses ────────────────────────────────────────
+  "run01",  "All-cause mortality",                           "USALEEP",    "tract",  "geoid",  "USALEEP",        list(character(0)),             0L,          FALSE,         "All-cause mortality | USALEEP | tract | age",       "Tract-level; no sex/race strata",
+  "run02",  "All-cause mortality",                           "IHME",       "county", "geoid",  "IHME",           list(character(0)),             0L,          FALSE,         "All-cause mortality | IHME | county | age",                               "",
+  "run03",  "All-cause mortality",                           "IHME",       "county", "geoid",  "IHME",           list("race_grp"),               0L,          FALSE,         "All-cause mortality | IHME | county | age + race",                        "",
+  "run04",  "Current asthma prevalence (adults)",           "CDC Places", "tract",  "geoid",  "CDC Places",     list(character(0)),             0L,          FALSE,         "Current asthma prevalence (adults) | CDC Places | tract | age (18+)",                    "Adults only; tract level",
+  "run05",  "Current asthma prevalence (adults)",           "CDC Places", "county", "geoid",  "CDC Places",     list(character(0)),             0L,          FALSE,         "Current asthma prevalence (adults) | CDC Places | county | age (18+)",                   "Adults only",
+  "run06",  "Current asthma prevalence (adults)",           "CHIS",       "county", "geoid",  "CHIS_granular",  list(character(0)),             0L,          FALSE,         "Current asthma prevalence (adults) | CHIS | county | age adults (granular)",             "Non-overlapping: 18-64, 65+",
+  "run07",  "Current asthma prevalence (adults)",           "CHIS",       "county", "geoid",  "CHIS_aggregate", list(character(0)),             0L,          FALSE,         "Current asthma prevalence (adults) | CHIS | county | age adults (18+ aggregate)",        "Comparable to CDC Places run05",
+  "run08",  "Current asthma prevalence (adults)",           "CHIS",       "state",  "geoid",  "CHIS_granular",  list(character(0)),             0L,          FALSE,         "Current asthma prevalence (adults) | CHIS | state | age adults (granular)",              "",
+  "run09",  "Current asthma prevalence (adults)",           "CHIS",       "state",  "geoid",  "CHIS_aggregate", list(character(0)),             0L,          FALSE,         "Current asthma prevalence (adults) | CHIS | state | age adults (18+ aggregate)",         "",
+  "run10",  "Current asthma prevalence (children)",         "CHIS",       "county", "geoid",  "CHIS_granular",  list(character(0)),             0L,          FALSE,         "Current asthma prevalence (adults) | CHIS | county | age children (granular)",           "Non-overlapping: 0-4, 5-17",
+  "run11",  "Current asthma prevalence (children)",         "CHIS",       "county", "geoid",  "CHIS_aggregate", list(character(0)),             0L,          FALSE,         "Current asthma prevalence (adults) | CHIS | county | age children (0-17 aggregate)",     "",
+  "run12",  "Current asthma prevalence (children)",         "CHIS",       "state",  "geoid",  "CHIS_granular",  list(character(0)),             0L,          FALSE,         "Current asthma prevalence (adults) | CHIS | state | age children (granular)",            "",
+  "run13",  "Current asthma prevalence (children)",         "CHIS",       "state",  "geoid",  "CHIS_aggregate", list(character(0)),             0L,          FALSE,         "Current asthma prevalence (adults) | CHIS | state | age children (0-17 aggregate)",      "",
+  "run14",  "Ischemic heart disease mortality",              "CDC Wonder", "county", "geoid",  "CDC Wonder",     list(character(0)),             0L,          FALSE,         "IHD mortality | CDC Wonder | county | age",                         "Age groups 45+ only",
+  "run15",  "Ischemic heart disease mortality",              "CDC Wonder", "county", "geoid",  "CDC Wonder",     list("sex_grp"),                0L,          FALSE,         "IHD mortality | CDC Wonder | county | age + sex",                   "Age groups 45+ only",
+  "run16",  "Ischemic heart disease mortality",              "CDC Wonder", "state",  "geoid",  "CDC Wonder",     list(character(0)),             0L,          FALSE,         "IHD mortality | CDC Wonder | state | age",                          "Age groups 25+ at state level",
+  "run17",  "Ischemic heart disease mortality",              "CDC Wonder", "state",  "geoid",  "CDC Wonder",     list("sex_grp"),                0L,          FALSE,         "IHD mortality | CDC Wonder | state | age + sex",                    "",
+  "run18",  "Lung cancer mortality",                         "IHME",       "county", "geoid",  "IHME",           list(character(0)),             0L,          FALSE,         "Lung cancer mortality | IHME | county | age",                               "",
+  "run19",  "Lung cancer mortality",                         "IHME",       "county", "geoid",  "IHME",           list("sex_grp"),                0L,          FALSE,         "Lung cancer mortality | IHME | county | age + sex",                         "",
+  "run20",  "Lung cancer mortality",                         "IHME",       "county", "geoid",  "IHME",           list("race_grp"),               0L,          FALSE,         "Lung cancer mortality | IHME | county | age + race",                        "",
+  "run21",  "Lung cancer mortality",                         "IHME",       "county", "geoid",  "IHME",           list(c("sex_grp", "race_grp")), 0L,          FALSE,         "Lung cancer mortality | IHME | county | age + sex + race",                  "",
+  "run22",  "Acute lower respiratory infection (children)",  "HCAi",       "county", "geoid",  "HCAi",           list(character(0)),             0L,          FALSE,         "Acute lower respiratory infection (children) | HCAi | county | age (0-17)",                        "Children only",
+  "run23",  "Acute lower respiratory infection (children)",  "HCAi",       "county", "geoid",  "HCAi",           list("sex_grp"),                0L,          FALSE,         "Acute lower respiratory infection (children) | HCAi | county | age + sex",                         "Children only",
+  #"run24",  "Acute lower respiratory infection (children)",  "HCAi",       "county", "geoid",  "HCAi",           list(c("sex_grp", "race_grp")), 0L,          FALSE,         "Acute lower respiratory infection (children) | HCAi | county | age + sex + race",                  "Children only"
+  
+) |>
+  mutate(strata = map(strata, ~ .x[[1]]))
 
 # =============================================================================
 # E. Core HIA function
@@ -287,12 +306,15 @@ run_hia <- function(merged_data, all_outcomes, run_row, rr_row, exposure_col) {
   q_flag_max  <- as.integer(run_row$q_flag_max)
   label       <- as.character(run_row$label)
   note        <- as.character(run_row$note)
-# Force strata to plain character vector regardless of nesting depth
+  unstratified <- isTRUE(run_row$unstratified)
+
+  # Force strata to plain character vector regardless of nesting depth
   strata <- unlist(run_row$strata, recursive = TRUE, use.names = FALSE)
   strata <- as.character(strata)
   strata <- strata[!is.na(strata)]   # remove any NA entries
   
   # --- E1. Filter outcome data ------------------------------------------------
+ 
   outcome <- all_outcomes %>%
     filter(
       otcm_nm == !!otcm_nm,
@@ -301,47 +323,74 @@ run_hia <- function(merged_data, all_outcomes, run_row, rr_row, exposure_col) {
       q_flag  <= q_flag_max
     )
   
+  # For primary unstratified runs: filter to All ages / Both / Total
+  if (unstratified) {
+    outcome <- outcome %>%
+      filter(age_grp == "All ages", sex_grp == "Both", race_grp == "Total")
+  }
+  
   if (nrow(outcome) == 0) {
     message(sprintf("[%s] No outcome data found — skipping.", run_id))
     return(NULL)
   }
   
-  # --- E2. Assign age groups via lookup ----------------------------------------
-  #    Join key is "age" to match merged$age (single-year integer)
+  
+  # --- E2. Assign age groups / filter valid exposures ------------------------
+  
   age_lkp <- age_lookups[[age_lkp_key]]
   
-  pop <- merged_data %>%
-    st_drop_geometry() %>%
-    left_join(age_lkp, by = "age") %>%
-    filter(
-      !is.na(age_grp),               # exclude ages outside this outcome's range
-      !is.na(.data[[exposure_col]])  # exclude missing exposure
-    )
+  if (unstratified) {
+    pop <- merged_data |>
+      filter(!is.na(.data[[exposure_col]])) |>
+      mutate(geoid = case_when(
+        geolevl == "county" ~ str_sub(geoid, 1, 5),
+        geolevl == "state"  ~ str_sub(geoid, 1, 2),
+        TRUE                ~ geoid
+      ))
+    group_cols    <- geo_col
+    active_strata <- character(0)
+    strata_used   <- "none (All ages / Both / Total)"
+    
+  } else {
+    age_lkp <- age_lookups[[age_lkp_key]]
+    pop <- merged_data |>
+      left_join(age_lkp, by = "age") |>
+      filter(!is.na(age_grp), 
+             !is.na(.data[[exposure_col]])) |>
+      mutate(geoid = case_when(
+        geolevl == "county" ~ str_sub(geoid, 1, 5),
+        geolevl == "state"  ~ str_sub(geoid, 1, 2),
+        TRUE                ~ geoid
+      ))
+    group_cols    <- geo_col
+    active_strata <- character(0)
+    strata_used   <- "none (All ages / Both / Total)"
+    
+    
+    # -- E3. Determine active strata ------------------------------
+    active_strata <- if (length(strata) == 0) {
+      character(0)
+    } else {
+      strata[sapply(strata, function(s) {
+        s %in% colnames(outcome) && n_distinct(outcome[[s]]) > 1
+      })]
+    }
+    group_cols  <- c(geo_col, "age_grp", active_strata)
+    strata_used <- if (length(active_strata) == 0) "age only"
+    else paste(c("age", active_strata), collapse = " + ")
+    
+    # ------ E4. Rename sex/race where needed ------------------------
+    if ("sex_grp" %in% active_strata && !"sex_grp" %in% colnames(pop))
+      pop <- pop |> rename(sex_grp = sex)
+    if ("race_grp" %in% active_strata && !"race_grp" %in% colnames(pop))
+      pop <- pop |> rename(race_grp = race)
+  }
+  
   
   if (nrow(pop) == 0) {
-    message(sprintf("[%s] No persons matched age lookup — skipping.", run_id))
+    message(sprintf("[%s] No persons matched — skipping.", run_id))
     return(NULL)
   }
-  
-  # --- E3. Determine active strata --------------------------------------------
-  active_strata <- if (length(strata) == 0) {
-    character(0)
-  } else {
-    strata[sapply(strata, function(s) {
-      s %in% colnames(outcome) && n_distinct(outcome[[s]]) > 1
-    })]
-  }
-  group_cols <- c(geo_col, "age_grp", active_strata)
-  
-  # --- E4. Aggregate persons to population cells ------------------------------
-  #    Rename sex → sex_grp and race → race_grp where needed for strata join
-  if ("sex_grp" %in% active_strata && !"sex_grp" %in% colnames(pop)) {
-    pop <- pop %>% rename(sex_grp = sex)
-  }
-  if ("race_grp" %in% active_strata && !"race_grp" %in% colnames(pop)) {
-    pop <- pop %>% rename(race_grp = race)
-  }
-  
   merge_group_cols <- intersect(group_cols, colnames(pop))
   
   pop_cells <- pop %>%
@@ -388,11 +437,20 @@ run_hia <- function(merged_data, all_outcomes, run_row, rr_row, exposure_col) {
       source      = source,
       exposure    = exposure_col,
       geo_col     = geo_col,
-      strata_used = if (length(active_strata) == 0) "age only"
-      else paste(c("age", active_strata), collapse = " + ")
+      strata_used = strata_used,
+      geolevl     = geolevl,   # ADD THIS
+      analysis    = if_else(unstratified, "primary", "sensitivity")
     )
   
+  if (nrow(result) == 0) {
+    message(sprintf("[%s | %s] No rows after mx filter — skipping.",
+                    run_id, exposure_col))
+    return(NULL)
+  }
+  
   return(result)
+  
+
 }
 
 # =============================================================================
@@ -403,23 +461,20 @@ run_hia <- function(merged_data, all_outcomes, run_row, rr_row, exposure_col) {
 
 hia_results <- pmap(run_specs, function(run_id, otcm_nm, source, geolevl,
                                         geo_col, age_lookup_key, strata,
-                                        q_flag_max, label, note) {
-  # Coerce scalars
-  run_id      <- as.character(run_id)
-  otcm_nm     <- as.character(otcm_nm)
-  source      <- as.character(source)
-  geolevl     <- as.character(geolevl)
-  geo_col     <- as.character(geo_col)
-  age_lkp_key <- as.character(age_lookup_key)
-  q_flag_max  <- as.integer(q_flag_max)
-  label       <- as.character(label)
-  note        <- as.character(note)
-  # strata arrives already unwrapped as plain character vector by pmap()
-  strata      <- strata
+                                        q_flag_max, unstratified, label, note) {
+  run_id       <- as.character(run_id)
+  otcm_nm      <- as.character(otcm_nm)
+  source       <- as.character(source)
+  geolevl      <- as.character(geolevl)
+  geo_col      <- as.character(geo_col)
+  age_lkp_key  <- as.character(age_lookup_key)
+  q_flag_max   <- as.integer(q_flag_max)
+  unstratified <- isTRUE(unstratified)
+  label        <- as.character(label)
+  note         <- as.character(note)
+  strata       <- strata
   
-  # Find all RR rows matching this outcome
-  rr_rows <- rr_table %>%
-    filter(otcm_nm == !!otcm_nm)
+  rr_rows <- rr_table %>% filter(otcm_nm == !!otcm_nm)
   
   if (nrow(rr_rows) == 0) {
     message(sprintf("[%s] No RR found for %s — skipping.", run_id, otcm_nm))
@@ -428,19 +483,16 @@ hia_results <- pmap(run_specs, function(run_id, otcm_nm, source, geolevl,
   
   message(sprintf("\n=== %s: %s ===", run_id, label))
   
-  # Loop over each exposure x RR combination for this outcome
-  pmap(rr_rows, function(exposure, beta_central, beta_lower, beta_upper, ...) {
-    
+  result <- pmap(rr_rows, function(exposure, beta_central, beta_lower, beta_upper, ...) {
     rr_row <- tibble(
       beta_central = beta_central,
       beta_lower   = beta_lower,
       beta_upper   = beta_upper
     )
-    
     run_hia(
       merged_data  = merged,
       all_outcomes = all_outcomes,
-      run_row      = list(           # plain list avoids tibble list-column issues
+      run_row      = list(
         run_id         = run_id,
         otcm_nm        = otcm_nm,
         source         = source,
@@ -449,6 +501,7 @@ hia_results <- pmap(run_specs, function(run_id, otcm_nm, source, geolevl,
         age_lookup_key = age_lkp_key,
         strata         = strata,
         q_flag_max     = q_flag_max,
+        unstratified   = unstratified,
         label          = label,
         note           = note
       ),
@@ -457,12 +510,20 @@ hia_results <- pmap(run_specs, function(run_id, otcm_nm, source, geolevl,
     )
   }) %>% compact()
   
+  # guard against empty results before flatten()
+  if (length(result) == 0) {
+    message(sprintf("[%s] No results returned — skipping.", run_id))
+    return(NULL)
+  }
+  
+  
+  result
+  
 }) %>%
-  flatten() %>%
-  compact()
+  compact() %>%
+  list_flatten() %>%   # replaces flatten(); requires purrr >= 1.0.0
+  bind_rows()          # combine all per-run/per-exposure data frames into one
 
-# Combine all runs into one long results table
-hia_all <- bind_rows(hia_results)
 
 # =============================================================================
 # H. Summary tables
@@ -471,7 +532,7 @@ hia_all <- bind_rows(hia_results)
 # --- H1. All-ages total per run x outcome x exposure x geography -------------
 #    Aggregated from age-specific cells — correctly reflects study population
 #    age structure rather than using a pre-aggregated "All ages" rate
-hia_totals <- hia_all %>%
+hia_totals <- hia_results %>%
   group_by(run_id, run_label, run_note, otcm_nm, source, exposure,
            geo_col, strata_used, outcome_year) %>%
   summarise(
@@ -489,7 +550,7 @@ print(hia_totals %>%
                y_central, y_lower, y_upper, P_total, n_cells))
 
 # --- H2. By age group ---------------------------------------------------------
-hia_by_age <- hia_all %>%
+hia_by_age <- hia_results %>%
   group_by(run_id, run_label, otcm_nm, source, exposure,
            geo_col, strata_used, age_grp) %>%
   summarise(
@@ -501,9 +562,9 @@ hia_by_age <- hia_all %>%
   )
 
 # --- H3. By geography cell (for mapping) -------------------------------------
-hia_by_geo <- hia_all %>%
+hia_by_geo <- hia_results %>%
   group_by(run_id, run_label, otcm_nm, source, exposure,
-           geo_col, strata_used, .data[[hia_all$geo_col[1]]]) %>%
+           geo_col, strata_used, .data[[hia_results$geo_col[1]]]) %>%
   summarise(
     P         = sum(P,         na.rm = TRUE),
     y_central = sum(y_central, na.rm = TRUE),
@@ -539,13 +600,13 @@ print(hia_strata_comparison)
 # I. Write outputs
 # =============================================================================
 
-write_csv(hia_all,               "data/processed/hia_all_runs_long.csv")
-write_csv(hia_totals,            "data/processed/hia_totals_by_run.csv")
-write_csv(hia_by_age,            "data/processed/hia_by_age.csv")
-write_csv(hia_by_geo,            "data/processed/hia_by_geography.csv")
-write_csv(hia_source_comparison, "data/processed/hia_source_sensitivity.csv")
-write_csv(hia_strata_comparison, "data/processed/hia_strata_sensitivity.csv")
+write_csv(hia_results,           "data/output/hia_results_runs_long.csv", append = FALSE)
+write_csv(hia_totals,            "data/output/hia_totals_by_run.csv", append = FALSE)
+write_csv(hia_by_age,            "data/output/hia_by_age.csv", append = FALSE)
+write_csv(hia_by_geo,            "data/output/hia_by_geography.csv", append = FALSE)
+write_csv(hia_source_comparison, "data/output/hia_source_sensitivity.csv", append = FALSE)
+write_csv(hia_strata_comparison, "data/output/hia_strata_sensitivity.csv", append = FALSE)
 
 message("\nHIA workflow complete.")
-message(sprintf("Total runs completed: %d", n_distinct(hia_all$run_id)))
-message(sprintf("Total output rows:    %d", nrow(hia_all)))
+message(sprintf("Total runs completed: %d", n_distinct(hia_results$run_id)))
+message(sprintf("Total output rows:    %d", nrow(hia_results)))

@@ -1,147 +1,267 @@
-# This script cleans IHD county-level mortality data for 10-year age groups, sex and race_ethnicity.
-# Data was downloaded from CDC Wonder: 1999-2020 underlying cause of death by bridged race categories https://wonder.cdc.gov/ucd-icd10.html
-# The CDC Wonder tool was used to select crude mortality rates from 2019, with ICD-10 codes for Ischemic Heart Disease 
-# as the underlying cause of death (I20-I25). The saved data request may be accessed here: http://wonder.cdc.gov/controller/saved/D76/D459F919
+# =============================================================================
+# Clean 2019 CDC Wonder IHD mortality data
+# State and county level, stratified by age, sex and race/ethnicity
+#
+# Sources:
+#   State by age:          http://wonder.cdc.gov/controller/saved/D76/D474F974
+#   County by age/sex/race: http://wonder.cdc.gov/controller/saved/D76/D476F903
+#
+# q_flag:
+#   0 = CDC estimate (reliable)
+#   1 = suppressed death count (1-9), imputed as 5 — CANNOT BE REPORTED
+#   2 = death count < 20, rate flagged as unreliable — use with caution
+#
+# Note: q_flag 1 and 2 rows retained with imputed rates for sensitivity
+#       analyses but excluded from main analysis outputs
+# =============================================================================
 
-library(readr)
-library(dplyr)
-library(tidyr)
-library(sf)
+library(tidyverse)
 library(stringr)
 
-# load county shapefiles
-counties <- st_read("data/raw/cb_2024_us_county_500k.shp")
-counties <- st_as_sf(counties, crs = 4326)
-counties <- counties[,2]
-colnames(counties) <- c("fips", "geometry")
+source("config.R")
 
-# process ihd mortality rates by county
-ihd <- read_csv("data/raw/ihd_mortality_county_no_strata_2019_CDC.csv")
+# =============================================================================
+# A. Shared cleaning function
+# =============================================================================
 
-# limit to relevant relevant and exclude metadata rows
-ihd <- ihd[-c(10:61), c(3,2,6:9)]
+clean_cdc_wonder <- function(path,
+                             geolevl,
+                             keep_rows    = NULL,
+                             keep_cols,
+                             has_hispanic = FALSE,
+                             fixed_sex    = NULL,
+                             fixed_race   = NULL,
+                             fixed_age    = NULL,   # add this
+                             keep_qflags  = 0L) {
+  
+  raw <- read_csv(path, show_col_types = FALSE)
+  
+  # limit rows — either by index or by filtering metadata (NA in County/State col)
+  if (!is.null(keep_rows)) {
+    raw <- raw[keep_rows, ]
+  } else {
+    raw <- raw |> filter(!is.na(raw[[1]]))
+  }
+  
+  # select and rename columns
+  raw <- raw |> select(all_of(keep_cols))
+  
+  # recode Hispanic origin into race column
+  if (has_hispanic) {
+    raw <- raw |>
+      mutate(race_grp = if_else(`Hispanic Origin` == "Hispanic or Latino",
+                                "Hispanic", race_grp)) |>
+      select(-`Hispanic Origin`)
+  }
+  
+  # add fixed columns where not stratified
+  if (!is.null(fixed_age))  raw <- raw |> mutate(age_grp  = fixed_age)
+  if (!is.null(fixed_sex))  raw <- raw |> mutate(sex_grp  = fixed_sex)
+  if (!is.null(fixed_race)) raw <- raw |> mutate(race_grp = fixed_race)
+  
+  raw |>
+    filter(!Population %in% c("Not Applicable", "Suppressed")) |>
+    # coerce all potentially mixed-type columns to character
+    # (some files read as dbl when no suppressed values present)
+    mutate(
+      across(c(Deaths, `Crude Rate`,
+               `Crude Rate Lower 95% Confidence Interval`,
+               `Crude Rate Upper 95% Confidence Interval`),
+             as.character)
+    ) |>
+    mutate(
+      `Crude Rate Lower 95% Confidence Interval` = if_else(
+        `Crude Rate Lower 95% Confidence Interval` %in% c("Suppressed", "Not Applicable", "Unreliable"),
+        NA_character_, `Crude Rate Lower 95% Confidence Interval`
+      ),
+      `Crude Rate Upper 95% Confidence Interval` = if_else(
+        `Crude Rate Upper 95% Confidence Interval` %in% c("Suppressed", "Not Applicable", "Unreliable"),
+        NA_character_, `Crude Rate Upper 95% Confidence Interval`
+      )
+    ) |>
+    mutate(
+      Population = as.numeric(Population),
+      Deaths     = as.numeric(if_else(Deaths == "Suppressed", "5", Deaths)),
+      # quality flag
+      q_flag = case_when(
+        Deaths == 5 & is.na(as.numeric(
+          if_else(`Crude Rate` %in% c("Unreliable", "Suppressed"),
+                  NA_character_, `Crude Rate`)))               ~ 1L,
+        `Crude Rate` == "Unreliable"                           ~ 2L,
+        TRUE                                                   ~ 0L
+      ),
+      
+      # impute rates for suppressed/unreliable (for sensitivity analysis)
+      `Crude Rate` = case_when(
+        `Crude Rate` %in% c("Unreliable", "Suppressed") ~ as.character(Deaths / Population * 100000),
+        TRUE ~ `Crude Rate`
+      ),
+      `Crude Rate` = as.numeric(`Crude Rate`),
+      # impute CIs for suppressed counts
+      `Crude Rate Lower 95% Confidence Interval` = case_when(
+        q_flag == 1 ~ as.numeric(1 / Population * 100000),
+        TRUE ~ as.numeric(`Crude Rate Lower 95% Confidence Interval`)
+      ),
+      `Crude Rate Upper 95% Confidence Interval` = case_when(
+        q_flag == 1 ~ as.numeric(9 / Population * 100000),
+        TRUE ~ as.numeric(`Crude Rate Upper 95% Confidence Interval`)
+      ),
+      # convert per 100k → per person-year
+      mx       = `Crude Rate`                                    / 100000,
+      mx_lower = `Crude Rate Lower 95% Confidence Interval`      / 100000,
+      mx_upper = `Crude Rate Upper 95% Confidence Interval`      / 100000,
+      # constant columns
+      geolevl  = geolevl,
+      otcm_nm  = "Ischemic heart disease mortality",
+      year     = "2019",
+      source   = "CDC Wonder",
+      mx_name  = "person-years at risk"
+    ) |>
+    filter(q_flag %in% keep_qflags) |>
+    mutate(geoid = str_pad(as.character(geoid), width = ifelse(geolevl == "state", 2, 5),
+                           side = "left", pad = "0")) |>
+    select(geoid, geolevl, lctn_nm, age_grp, sex_grp, race_grp,
+           otcm_nm, year, source, mx_name, mx, mx_lower, mx_upper, q_flag)
+}
 
-# update column names
-colnames(ihd) <- c("fips", "location_name", "mx", "lCI", "uCI", "se")
+# =============================================================================
+# B. Load and clean each dataset
+# =============================================================================
 
-ihd$year <- "2019"
-ihd$outcome_name <- "Ischemic heart disease mortality"
-ihd$metric_name <- "Rate"
+# State — age only
+st_a <- clean_cdc_wonder(
+  path       = "data/raw/baseline_health_outcomes/ihd_mortality_state_2019_CDC_age.csv",
+  geolevl    = "state",
+  keep_rows  = c(1:11),
+  keep_cols  = c(geoid = "State Code", lctn_nm = "State",
+                 age_grp = "Ten-Year Age Groups",
+                 Deaths = "Deaths", Population = "Population",
+                 "Crude Rate",
+                 "Crude Rate Lower 95% Confidence Interval",
+                 "Crude Rate Upper 95% Confidence Interval"),
+  fixed_sex  = "Both", fixed_race = "Total", keep_qflags = 0L
+)
 
-write_csv(ihd, "ihd_county_2019_CDC.csv")
-# process crude ihd mortality rates stratified by age, sex and race/ethnicity
-#ihd <- read_csv("data/raw/ihd_mortality_county_2019_CDC.csv")
-ihd <- read_csv("data/raw/ihd_mortality_county_10y_2019_CDC.csv")
-ihd <- ihd[-c(2593:2660), c(2,3,4,6,8,10,12,13:16)]
+# State — age + sex
+st_s <- clean_cdc_wonder(
+  path       = "data/raw/baseline_health_outcomes/ihd_mortality_state_2019_CDC_age_sex.csv",
+  geolevl    = "state",
+  keep_rows  = 1:22,
+  keep_cols  = c(geoid = "State Code", lctn_nm = "State",
+                 age_grp = "Ten-Year Age Groups", sex_grp = "Sex",
+                 Deaths = "Deaths", Population = "Population",
+                 "Crude Rate",
+                 "Crude Rate Lower 95% Confidence Interval",
+                 "Crude Rate Upper 95% Confidence Interval"),
+  fixed_race = "Total", keep_qflags = 0L
+)
 
-# suppressed death counts (deaths between 1-9) were recoded as "5", mid-point between 1-9.
-ihd[ihd$Deaths == "Suppressed", "Deaths"] <- "5"
-ihd$Deaths <- as.numeric(ihd$Deaths)
+# State — age + sex + race
+st_ihd <- clean_cdc_wonder(
+  path         = "data/raw/baseline_health_outcomes/ihd_mortality_state_2019_CDC_age_sex_race.csv",
+  geolevl      = "state",
+  keep_rows    = 1:288,
+  keep_cols    = c(geoid = "State Code", lctn_nm = "State",
+                   age_grp = "Ten-Year Age Groups", sex_grp = "Sex",
+                   race_grp = "Race", "Hispanic Origin",
+                   Deaths = "Deaths", Population = "Population",
+                   "Crude Rate",
+                   "Crude Rate Lower 95% Confidence Interval",
+                   "Crude Rate Upper 95% Confidence Interval"),
+  has_hispanic = TRUE, keep_qflags = 0L
+)
 
-# remove rows where age and/or hispanic origin is not stated, or where population totals for these groups are suppressed or not available
-# as we are unable to calculate a crude rate for these groups. 
-ihd <- ihd[!ihd$Population == "Not Applicable", ]
-ihd <- ihd[!ihd$Population == "Suppressed", ]
+# County — age + sex (no race)
+ihdb <- clean_cdc_wonder(
+  path       = "data/raw/baseline_health_outcomes/ihd_mortality_county_2019_CDC_age_sex.csv",
+  geolevl    = "county",
+  keep_rows  = 1:216,
+  keep_cols  = c(geoid = "County Code", lctn_nm = "County",
+                 age_grp = "Ten-Year Age Groups", sex_grp = "Sex",
+                 Deaths = "Deaths", Population = "Population",
+                 "Crude Rate",
+                 "Crude Rate Lower 95% Confidence Interval",
+                 "Crude Rate Upper 95% Confidence Interval"),
+  fixed_race = "Total", keep_qflags = 0L
+) |> mutate(lctn_nm = str_remove(lctn_nm, " County, CA"))
 
-ihd$Population <- as.numeric(ihd$Population)
+# County — age only
+ihdc <- clean_cdc_wonder(
+  path       = "data/raw/baseline_health_outcomes/ihd_mortality_county_2019_CDC_age.csv",
+  geolevl    = "county",
+  keep_rows  = 1:108,
+  keep_cols  = c(geoid = "County Code", lctn_nm = "County",
+                 age_grp = "Ten-Year Age Groups",
+                 Deaths = "Deaths", Population = "Population",
+                 "Crude Rate",
+                 "Crude Rate Lower 95% Confidence Interval",
+                 "Crude Rate Upper 95% Confidence Interval"),
+  fixed_sex  = "Both", fixed_race = "Total", keep_qflags = 0L
+) |> mutate(lctn_nm = str_remove(lctn_nm, " County, CA"))
 
-#recode Race category - if Hispanic origin is "Hispanic or Latino" change race to "Hispanic" for consistency
-ihd[ihd$`Hispanic Origin`== "Hispanic or Latino", "Race"] <- "Hispanic"
-ihd <- ihd[, -5]
+# County — age + sex + race
+ihda <- clean_cdc_wonder(
+  path         = "data/raw/baseline_health_outcomes/ihd_mortality_county_2019_CDC.csv",
+  geolevl      = "county",
+  keep_rows    = 1:2592,
+  keep_cols  = c(geoid = "County Code", lctn_nm = "County", 
+                 age_grp = "Ten-Year Age Groups", sex_grp = "Sex",
+                 race_grp = "Race", "Hispanic Origin", 
+                 Deaths = "Deaths", Population = "Population",
+                 "Crude Rate",
+                 "Crude Rate Lower 95% Confidence Interval",
+                 "Crude Rate Upper 95% Confidence Interval"),
+  has_hispanic = TRUE, keep_qflags = 0L
+) |> mutate(lctn_nm = str_remove(lctn_nm, " County, CA"))
 
-# recode county variable
-ihd$County <- str_remove(ihd$County, " County, CA")
+# County - unstratified
+ihd_total <- clean_cdc_wonder(
+  path        = "data/raw/baseline_health_outcomes/ihd_mortality_county_2019_CDC_all_ages.csv",
+  geolevl     = "county",
+  keep_rows   = 1:9,
+  keep_cols   = c(geoid = "County Code", lctn_nm = "County",
+                  Deaths = "Deaths", Population = "Population",
+                  "Crude Rate",
+                  "Crude Rate Lower 95% Confidence Interval",
+                  "Crude Rate Upper 95% Confidence Interval"),
+  fixed_age   = "All ages",
+  fixed_sex   = "Both",
+  fixed_race  = "Total",
+  keep_qflags = 0L
+) |>
+  mutate(lctn_nm = str_remove(lctn_nm, " County, CA"))
+# =============================================================================
+# C. Combine and recode age groups
+# =============================================================================
 
-# after removing hispanic origin column, sum deaths and population by other variables
-ihd <- ihd %>%
-  group_by(County, `County Code`, `Ten-Year Age Groups`, Sex, Race) %>%
-  summarize(Deaths = sum(Deaths, na.rm = TRUE),
-            Population = sum(Population, na.rm = TRUE)) 
+ihd <- bind_rows(st_a, st_s, st_ihd, ihda, ihdb, ihdc, ihd_total) |>
+  mutate(
+    age_grp = recode(age_grp,
+                     "25-34 years" = "25 to 34",
+                     "35-44 years" = "35 to 44",
+                     "45-54 years" = "45 to 54",
+                     "55-64 years" = "55 to 64",
+                     "65-74 years" = "65 to 74",
+                     "75-84 years" = "75 to 84",
+                     "85+ years"   = "85 plus",
+                     "All ages"    = "All ages"
+    )
+  )
 
-# Find totals for both sexes by county, age and race/ethnicity
-both <- ihd %>%
-  group_by(County, `County Code`, `Ten-Year Age Groups`, Race) %>%
-  summarize(Deaths = sum(Deaths, na.rm = TRUE),
-            Population = sum(Population, na.rm = TRUE)) 
-both$Sex <- "Both"
-# rbind rows with both sex totals
-ihd <- rbind(ihd, both)
+# =============================================================================
+# D. QA checks
+# =============================================================================
 
-# find totals for all ages by county, sex and race. 
-ages <- ihd %>%
-  group_by(County, `County Code`, Sex, Race) %>%
-  summarize(Deaths = sum(Deaths, na.rm = TRUE),
-            Population = sum(Population, na.rm = TRUE)) 
+message(sprintf("Total rows: %d", nrow(ihd)))
+message(sprintf("State rows: %d", sum(ihd$geolevl == "state")))
+message(sprintf("County rows: %d", sum(ihd$geolevl == "county")))
+message(sprintf("Missing rates: %d", sum(is.na(ihd$mx))))
+summary(ihd$mx)
 
-ages$'Ten-Year Age Groups' <- "All ages"
-# rbind rows with all age groups
-ihd <- rbind(ihd, ages)
+# =============================================================================
+# E. Write output
+# =============================================================================
 
-# find totals for all races by county, age and sex
-race <- ihd %>%
-  group_by(County, `County Code`, Sex, `Ten-Year Age Groups`) %>%
-  summarize(Deaths = sum(Deaths, na.rm = TRUE),
-            Population = sum(Population, na.rm = TRUE)) 
-
-race$Race <- "Total"
-
-ihd <- rbind(ihd, race)
-
-# Calculate crude mortality rate
-ihd$mx <- (ihd$Deaths/ihd$Population)
-ihd$lCI <- NA
-ihd$uCI <- NA
-
-# calculate crude deaths per 100,000 pop
-ihd$mx_100k <- (ihd$Deaths/ihd$Population)*100000
-ihd$lCI_100k <- NA
-ihd$uCI_100k <- NA
-
-# Calculate death and population totals by county and age group
-county <- ihd %>%
-  group_by(County, `Ten-Year Age Groups`) %>%
-  summarize(Deaths = sum(Deaths),
-            Population = sum(Population))
-
-# calculate county age group-specific crude mortality rates (both sexes, all races)
-county$mx <- county$Deaths/county$Population
-county$mx_100k <- county$mx*100000
-county$Sex <- "Both"
-county$Race <- "Total"
-
-ihd$outcome_name <- "Ischemic heart disease mortality"
-
-ihd$metric_name <- "Rate"
-
-ihd$year <- "2019"
-
-ihd <- ihd[, -c(6,7)]
-
-ihd <- ihd[, c(1:5,12,14,13, 6:11)]
-
-# under 25 year olds had no lc deaths
-children <- c("< 1 year", "1-4 years", "5-14 years","15-24 years")
-
-ihd <- ihd[!ihd$`Ten-Year Age Groups` %in% children, ]
-
-colnames(ihd) <- c("location_name", 
-                   "fips", 
-                   "age_name", 
-                   "sex_name", 
-                   "race_name", 
-                   "outcome_name", 
-                   "year", 
-                   "metric_name", 
-                   "mx",
-                   "lCI",
-                   "uCI",
-                   "mx_100k",
-                   "lCI_100k",
-                   "uCI_100k")
-
-# save processed data
-write_csv(ihd, "data/processed/ihd_mortality_county_2019_CDC.csv", append = FALSE)
-
-# make shapefiles
-ihd <- merge(ihd, counties)
-st_write(ihd, "data/processed/ihd_mortality_county_2019_CDC.shp", append = FALSE)
+write_csv(ihd, "data/processed/ihd_mortality_county_state_2019_CDC.csv", append = FALSE)
+rm(st_a, st_s, st_ihd, ihda, ihdb, ihdc, ihd)
+gc()

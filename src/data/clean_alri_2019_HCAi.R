@@ -1,132 +1,129 @@
-############################################################################################
-# This script cleans data on number of ER visits and hospitalizations in 2019, for children 0-17 (inclusive) residing in the 
-# San Francisco Bay Area, for children, ER visits or hospitalizations were included if the primary diagnosis was one of the 
-# ICD-10 codes for acute lower respiratory infections,
-# including those for influenza, pneumonia and other acute respiratory infections (J09-J18, J20-J22).
-# The custom dataset was requested from the HCAi Department of Health Care Access and Information Patient Discharge (PDD)
-# and Emergency Department and Ambulatory Surgery (EDAS) Datasets.
-#############################################################################################
-# clean ALRI data
 
-library(readr)
+# =============================================================================
+# Clean 2019 HCAi ALRI data for children 0-17 in the San Francisco Bay Area
+#
+# Source: HCAi Patient Discharge (PDD) and Emergency Department and
+#         Ambulatory Surgery (EDAS) Datasets (custom request CS3044)
+# Includes ER visits and hospitalizations with primary ICD-10 diagnosis
+# of acute lower respiratory infection (J09-J18, J20-J22)
+# =============================================================================
+
+library(tidyverse)
 library(sf)
-library(dplyr)
 
+source("config.R")
 
-# read in csv data file
-alri <- read.csv("data/raw/baseline_health_outcomes/ALRI_2019_ CS3044.csv", encoding = "UTF-8")
-alri <- as.data.frame(alri)
+# =============================================================================
+# A. Load and initial clean
+# =============================================================================
 
-# We will not differentiate between ER visits and hospital admissions for this analysis,
-# so remove Patient Type variable. We will also omit the cost variables for this dataset.
-alri <- alri[, -c(2,6,7)]
+alri <- read_csv("data/raw/baseline_health_outcomes/ALRI_2019_CS3044.csv",
+                 locale = locale(encoding = "UTF-8")) |>
+  select(
+    lctn_nm  = County,
+    race_grp = Race,
+    sex_grp  = Sex,
+    mx       = `Number of Cases`
+  ) |>
+  mutate(
+    mx = if_else(mx == "<11", "10", mx),
+    mx = as.numeric(mx)
+  )
+# =============================================================================
+# B. Aggregate counts by group
+# =============================================================================
 
-# Change column names
-colnames(alri) <- c("lctn_nm",  "race_grp",            "sex_grp",             "mx")
+# sum ER visits and hospital admissions by county, race, sex
+alri <- alri |>
+  group_by(lctn_nm, race_grp, sex_grp) |>
+  summarize(mx = sum(mx, na.rm = TRUE), .groups = "drop")
 
-# In the HCAi dataset, actual number of visits for a subgroup was recoded to "<11" if 10 or below for patient privacy
-# Recode to numeric 10 for analysis
-alri[alri$mx == "<11", "mx"] <- "10"
-alri$mx <- as.numeric(alri$mx)
+# add Both sex totals
+alri <- alri |>
+  bind_rows(
+    alri |>
+      group_by(lctn_nm, race_grp) |>
+      summarize(mx = sum(mx, na.rm = TRUE), .groups = "drop") |>
+      mutate(sex_grp = "Both")
+  )
 
-# sum the ER visit and Hospital admission counts by county, race and sex
-alri <- alri %>%
-  group_by(lctn_nm, race_grp, sex_grp) %>%
-  summarize(mx = sum(mx, na.rm = TRUE),
-            .groups = "keep")
+# add Total race totals
+# Note: race categories in ALRI are White, Black, Asian/Pacific Islander,
+# Hispanic, Other. "Other" is excluded from rate calculations due to no
+# corresponding census population data, but included in "Total"
+alri <- alri |>
+  bind_rows(
+    alri |>
+      group_by(lctn_nm, sex_grp) |>
+      summarize(mx = sum(mx, na.rm = TRUE), .groups = "drop") |>
+      mutate(race_grp = "Total")
+  )
 
-# calculate total visits for males and females combined
-both <- alri %>%
-  group_by(lctn_nm, race_grp) %>%
-  summarize(mx = sum(mx, na.rm = TRUE),
-                .groups = "keep")
+# =============================================================================
+# C. Recode and add constant columns
+# =============================================================================
 
-both$sex_grp <- "Both"
+alri <- alri |>
+  mutate(
+    race_grp = recode(race_grp,
+                      "Asian/Pacific Islander" = "Asian / Pacific Islander"
+    ),
+    geolevl  = "county",
+    age_grp  = "0 to 17",
+    otcm_nm  = "Acute lower respiratory infection (children)",
+    year     = "2019",
+    source   = "HCAi",
+    mx_name  = "prevalence",   # although mx is currently a count, we will estimate alri prevalence in the block below, so changing the name here
+    mx_lower = NA_real_,
+    mx_upper = NA_real_,
+    q_flag   = 0L
+  )
 
-# add the rows with combined male and female totals to the alri dataset
-alri <- rbind(alri, both)
+# =============================================================================
+# D. Add county FIPS codes
+# =============================================================================
 
-# calculate the total visits for all races combined - HCAI data comes in pre-defined race groups
-# White, Black, Asian, American Indian / Alaskan Native, Native Hawaiian or other Pacific Islander, 
-#Multi-racial and Other/Unknown. Because of small cell sizes, categories were recoded to: White, Black, 
-# Asian/Pacific Islander, Hispanic, Other (where 'Other' are all other categories) before data was released.
-# To calculate county level incidence, we merge US Census 2019 unbridged single-year population estimates were used to estimate prevalence of alri in 2019 
-# for children 0-17 years by sex, and race/ethinicity. Only race/ethnicity categories White, Black, Asian/Pacific
-# Islander and Hispanic were present in both the ALRI and US Census 2020 single-year population datasets, so we
-# were unable to estimate prevalence for other race groups (e.g. American Indian / Alaskan Native). However, we
-# calculated an overall prevalence for all race/ethnicities which includes these groups.
+fips <- st_read("data/raw/census_boundaries/tiger_line_shapefiles/2019/tl_2019_06_sfbacounty_cleaned.shp") |>
+  st_drop_geometry() |>
+  select(geoid = 1, lctn_nm = 2)
 
-# add a "Total" category in race_name variable and sum visits for all races by county and sex
-allraces <- alri %>%
-  group_by(lctn_nm, sex_grp) %>%
-  summarize(mx = sum(mx, na.rm = TRUE),
-            .groups = "keep")
-allraces$race_grp <- "Total"
+alri <- alri |>
+  left_join(fips, by = "lctn_nm") |>
+  mutate(geoid = paste0("06", geoid))
 
-# add the rows with combined race data to the alri dataset
-alri <- rbind(alri, allraces)
+# =============================================================================
+# E. Merge with population data to calculate incidence rate
+# =============================================================================
 
-# recode to match population data variables
-alri[alri$race_grp == "Asian/Pacific Islander", "race_grp"] <- "Asian / Pacific Islander"
+# Note: "Other" race excluded from rate calculation (no corresponding census
+# population data). "American Indian / Alaskan Native" excluded from demo
+# data as it is not present in ALRI data.
 
+demo <- read_csv("data/raw/population_data/pop_0_17_sex_race_county_2019.csv") |>
+  select(geoid, sex_grp, race_grp, population)
 
-# load county and census tract shapefiles
-counties <- st_read("data/raw/census_boundaries/tiger_line_shapefiles/2019/tl_2019_06_sfbacounty_cleaned.shp")
+alri <- alri |>
+  filter(race_grp != "Other") |>
+  left_join(
+    demo |> filter(race_grp != "American Indian / Alaskan Native"),
+    by = c("geoid", "sex_grp", "race_grp")
+  ) |>
+  mutate(mx = mx / population) |>
+  select(lctn_nm, geolevl, geoid, age_grp, race_grp, sex_grp,
+         otcm_nm, year, source, mx_name, mx, mx_lower, mx_upper, q_flag)
 
-# make a dataframe for merge with alri data (to add county fips code column)
-fips <- counties[, c(1,2)] %>%
-  st_drop_geometry(.)
-colnames(fips) <- c("geoid", "lctn_nm")
+# =============================================================================
+# F. QA checks
+# =============================================================================
 
-# add fips code column
-alri <- merge(fips, alri, all.y = TRUE)
+message(sprintf("Counties retained: %d (expected 9)", n_distinct(alri$geoid)))
+message(sprintf("Missing incidence rates: %d", sum(is.na(alri$mx))))
+summary(alri$mx)
 
-# add age_name, metric_name, lCI and uCI columns to standardize with other health datasets
-alri$geolevl <- "county"
-alri$age_grp <- "0 to 17"
-alri$otcm_nm <- "acute lower respiratory infection"
-alri$year <- "2019"
-alri$source <- "HCAi"
-alri$mx_lower <- NA
-alri$mx_upper <- NA
-alri$q_flag <- 0
+# =============================================================================
+# G. Write output
+# =============================================================================
 
-alri <- alri[, c(2,6,1,7,4,3,8:10,5,11:13)]
-
-# load demographic data (e.g. population counts) for children ages 0-17
-demo <- read_csv("data/raw/population_data/pop_0_17_sex_race_county_2019.csv")
-demo <- demo[, c(1,4,5,7)]
-
-# merge alri data with population data to calculate and estimated incidence rate - this will likely be an underestimate since 
-# alri diagnosed and treated in non-hospital clinical settings are not captured. 
-
-# remove non-corresponding race categories from alri ("Other") and demo ("American Indian / Alaskan Native) datasets
-alri <- alri[!alri$race_grp == "Other", ]
-demo <- demo[!demo$race_grp == "American Indian / Alaskan Native", ]
-alri$geoid <- paste0("06", alri$geoid)
-
-alri <- merge(alri, demo)
-
-# calculate alri EDvisits/hospitalizations per child 0-17 by county and race/ethnicity  
-alri$mx <- (alri$mx/alri$population)
-
-alri<- alri[, c(1,4,5,6,2,3,7:13)]
-
-
-write_csv(alri, "data/processed/alri_county_2019_HCAI.csv")
-
-
-
-# make shapefiles
-#alri <- merge(alri, counties, by = "fips")
-#alri <- alri[, -c(12:17)]
-
-#alri$mx_name <- "person-year at risk"
-#alri <- alri[, c(1:9, 14, 10:13)]
-
-write_csv(alri, "data/processed/alri_county_2019_HCAI.csv", append = FALSE)
-
-#st_write(alri, "data/processed/alri_county_2019_HCAI.shp", append = FALSE)
-
-rm(alri, counties)
+write_csv(alri, "data/processed/alri_county_2019_HCAi.csv", append = FALSE)
+rm(alri, demo, fips)
 gc()
